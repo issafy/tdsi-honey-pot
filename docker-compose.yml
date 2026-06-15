@@ -1,0 +1,66 @@
+services:
+  # ============================================================
+  # Dashboard (always on)
+  # ============================================================
+  backend:
+    build: ./backend
+    container_name: hp-backend
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      CORS_ORIGIN: http://localhost:5173
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./backend/src:/app/src
+    command: ["npx", "nodemon", "src/index.js"]
+
+  frontend:
+    build: ./frontend
+    container_name: hp-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:3001
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    command: ["npx", "vite", "--host", "0.0.0.0"]
+
+  # ============================================================
+  # Honeypots (profile: honeypot)
+  # Start with: docker compose --profile honeypot up
+  # ============================================================
+
+  # SSH/Telnet honeypot — catches brute-force attacks
+  cowrie:
+    build: ./honeypots/cowrie
+    container_name: hp-cowrie
+    profiles: ["honeypot"]
+    ports:
+      - "2222:2222"   # SSH (map to 22 on host for real traffic)
+      - "2223:2223"   # Telnet (map to 23 on host)
+    volumes:
+      - ./honeypots/cowrie/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+    restart: unless-stopped
+
+  # HTTP honeypot — fake vulnerable web app (login pages, admin panels, phpMyAdmin)
+  web-honeypot:
+    build: ./honeypots/web
+    container_name: hp-web-honeypot
+    profiles: ["honeypot"]
+    ports:
+      - "8080:80"     # HTTP (map to 80 on host for real traffic)
+    environment:
+      PORT: 80
+      BACKEND_URL: http://backend:3001
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  cowrie-logs:
