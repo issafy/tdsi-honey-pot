@@ -1,0 +1,32 @@
+# ===================================================================
+# Exposed ports override — USE ONLY WITH THE FIREWALL ACTIVE.
+#
+# This file remaps honeypot services from high ports to standard
+# internet-facing ports (22, 80). Without the firewall, these ports
+# would be open to the entire internet.
+#
+# Prerequisites:
+#   1. sudo ./scripts/firewall-up.sh <your-ip>
+#   2. If port 22 is in use, move real SSH first (see README)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.exposed.yml --profile honeypot up
+#
+# To stop:
+#   docker compose -f docker-compose.yml -f docker-compose.exposed.yml --profile honeypot down
+#   sudo ./scripts/firewall-down.sh
+# ===================================================================
+
+services:
+  backend:
+    environment:
+      MOCK_ENABLED: "false"    # Real honeypot data only — no fake attacks
+
+  cowrie:
+    ports:
+      - "22:2222"     # ⚠️  Standard SSH — only your IP can reach it (firewall)
+      - "23:2223"     # Standard Telnet
+
+  web-honeypot:
+    ports:
+      - "80:80"       # ⚠️  Standard HTTP — only your IP can reach it (firewall)

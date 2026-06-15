@@ -54,8 +54,13 @@ io.on('connection', (socket) => {
 });
 
 // --- Start ---
-startGenerator();
-log.info('generator', 'Mock attack generator started');
+const MOCK_ENABLED = process.env.MOCK_ENABLED === 'true';
+if (MOCK_ENABLED) {
+  startGenerator();
+  log.info('generator', 'Mock attack generator started (MOCK_ENABLED=true)');
+} else {
+  log.info('generator', 'Mock generator disabled — waiting for real honeypot events');
+}
 
 httpServer.listen(PORT, () => {
   log.info('server', `Listening on http://0.0.0.0:${PORT} | WebSocket ready | CORS: ${CORS_ORIGIN}`);
