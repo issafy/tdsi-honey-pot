@@ -2,7 +2,7 @@ import { getAttackColor, getSeverityColor } from '../../utils/colors';
 
 export function AttackBadge({ type }) {
   const color = getAttackColor(type);
-  const label = type.replace(/_/g, ' ');
+  const label = String(type).replace(/_/g, ' ');
   return (
     <span
       className="inline-block px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded-full border"
