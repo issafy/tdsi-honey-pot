@@ -7,6 +7,7 @@ import attacksRouter from './routes/attacks.js';
 import statsRouter from './routes/stats.js';
 import honeypotRouter from './routes/honeypot.js';
 import { startGenerator } from './services/attackGenerator.js';
+import { init as initDb, healthCheck as dbHealthCheck } from './services/db.js';
 import { createLogger } from './utils/logger.js';
 
 const log = createLogger('server');
@@ -40,8 +41,9 @@ app.use('/api/stats', statsRouter);
 app.use('/api/honeypot', honeypotRouter);
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+app.get('/api/health', async (req, res) => {
+  const dbOk = await dbHealthCheck().catch(() => false);
+  res.json({ status: dbOk ? 'ok' : 'degraded', uptime: process.uptime(), db: dbOk });
 });
 
 // --- WebSocket ---
@@ -54,14 +56,21 @@ io.on('connection', (socket) => {
 });
 
 // --- Start ---
-const MOCK_ENABLED = process.env.MOCK_ENABLED === 'true';
-if (MOCK_ENABLED) {
-  startGenerator();
-  log.info('generator', 'Mock attack generator started (MOCK_ENABLED=true)');
-} else {
-  log.info('generator', 'Mock generator disabled — waiting for real honeypot events');
-}
+try {
+  await initDb();
 
-httpServer.listen(PORT, () => {
-  log.info('server', `Listening on http://0.0.0.0:${PORT} | WebSocket ready | CORS: ${CORS_ORIGIN}`);
-});
+  const MOCK_ENABLED = process.env.MOCK_ENABLED === 'true';
+  if (MOCK_ENABLED) {
+    startGenerator();
+    log.info('generator', 'Mock attack generator started (MOCK_ENABLED=true)');
+  } else {
+    log.info('generator', 'Mock generator disabled — waiting for real honeypot events');
+  }
+
+  httpServer.listen(PORT, () => {
+    log.info('server', `Listening on http://0.0.0.0:${PORT} | WebSocket ready | CORS: ${CORS_ORIGIN}`);
+  });
+} catch (err) {
+  log.error('server', 'Failed to initialize database — exiting', err);
+  process.exit(1);
+}

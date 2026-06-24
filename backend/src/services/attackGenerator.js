@@ -40,11 +40,11 @@ let attackCount = 0;
 export function startGenerator() {
   if (intervalId) return;
 
-  function tick() {
+  async function tick() {
     const count = randomInt(1, 3);
     for (let i = 0; i < count; i++) {
       const attack = generateAttack();
-      addAttack(attack);
+      await addAttack(attack);
       attackCount++;
 
       // Broadcast via WebSocket

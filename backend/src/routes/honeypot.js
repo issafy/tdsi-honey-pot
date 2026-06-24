@@ -46,7 +46,7 @@ function resolveGeo(ip) {
  * Ingestion endpoint for honeypot services (Cowrie, web honeypot, etc.)
  * GeoIP-resolves the source IP and broadcasts via WebSocket.
  */
-router.post('/event', (req, res) => {
+router.post('/event', async (req, res) => {
   const { sourceIp, attackType, protocol, port, payload } = req.body;
 
   if (!sourceIp || !attackType) {
@@ -72,7 +72,7 @@ router.post('/event', (req, res) => {
     timestamp: Date.now(),
   };
 
-  const stored = addAttack(attack);
+  const stored = await addAttack(attack);
 
   log.info('event', `${attackType} from ${sourceIp} (${geo.country}: ${geo.lat.toFixed(1)}°, ${geo.lon.toFixed(1)}°) → port ${attack.port}`);
 
