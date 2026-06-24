@@ -1,21 +1,36 @@
 services:
   # ============================================================
-  # Dashboard (always on)
+  # Dashboard (always on) — backend-net
   # ============================================================
   backend:
     build: ./backend
     container_name: hp-backend
     ports:
+      # PAT - Port Address Translation
       - "3001:3001"
     environment:
       NODE_ENV: development
       PORT: 3001
+      # Cross Origin Request Sharing
+      # XSS - Cross Site Scripting
       CORS_ORIGIN: http://localhost:5173
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MOCK_ENABLED: "true"     # Fake attacks for demo (off when honeypots are running)
+      # PostgreSQL connection
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: honeypot
+      DB_USER: ${DB_USER:-honeypot}
+      DB_PASSWORD: ${DB_PASSWORD:-honeypot123}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./backend/src:/app/src
     command: ["npx", "nodemon", "src/index.js"]
+    networks:
+      - backend-net
+      - honeypot-net          # Receives attack logs from honeypots
 
   frontend:
     build: ./frontend
@@ -30,9 +45,35 @@ services:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     command: ["npx", "vite", "--host", "0.0.0.0"]
+    networks:
+      - backend-net
 
   # ============================================================
-  # Honeypots (profile: honeypot)
+  # PostgreSQL — attack data persistence
+  # ============================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: hp-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: honeypot
+      POSTGRES_USER: ${DB_USER:-honeypot}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-honeypot123}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeypot -d honeypot"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - backend-net
+
+  # ============================================================
+  # Honeypots (profile: honeypot) — honeypot-net
   # Start with: docker compose --profile honeypot up
   # ============================================================
 
@@ -48,6 +89,8 @@ services:
       - ./honeypots/cowrie/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
       - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
     restart: unless-stopped
+    networks:
+      - honeypot-net
 
   # HTTP honeypot — fake vulnerable web app (login pages, admin panels, phpMyAdmin)
   web-honeypot:
@@ -62,6 +105,17 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - honeypot-net
 
 volumes:
   cowrie-logs:
+  postgres-data:
+
+networks:
+  backend-net:
+    name: hp-backend-net
+    driver: bridge
+  honeypot-net:
+    name: hp-honeypot-net
+    driver: bridge

@@ -12,6 +12,7 @@ Docker-based honeypot monitoring system with a **3D globe attack map**. Real-tim
  Internet ──────────►│  Cowrie SSH (22)                 │──┐
       │              │  Web Honeypot (80)               │──┤
       │              │  (profile: honeypot)             │  │
+      │              │  Network: hp-honeypot-net        │  │
       │              └──────────────────────────────────┘  │
       │                                                    ▼
       │              ┌──────────────────────────────────────────┐
@@ -23,28 +24,29 @@ Docker-based honeypot monitoring system with a **3D globe attack map**. Real-tim
                                                │
                      ┌─────────────────────────▼──────────────┐
                      │  Express Backend (:3001)               │
+                     │  Dual-homed: hp-backend-net +          │
+                     │              hp-honeypot-net           │
                      │  ┌──────────┐ ┌──────────┐ ┌────────┐ │
                      │  │ REST API │ │Socket.io │ │ GeoIP  │ │
                      │  │/api/...  │ │  (WS)    │ │lookup  │ │
                      │  └──────────┘ └──────────┘ └────────┘ │
                      │         MOCK_ENABLED=true|false        │
-                     └──────────────────┬─────────────────────┘
-                                        │
-                     ┌──────────────────▼─────────────────────┐
-                     │  React Frontend (:5173)                │
-                     │  ┌──────────────────────────────────┐  │
-                     │  │      🌍 3D Globe (Three.js)      │  │
-                     │  │  • Day/night Earth textures      │  │
-                     │  │  • Animated Bezier arcs          │  │
-                     │  │  • Particle streams + pulses     │  │
-                     │  │  • Atmosphere Fresnel shader     │  │
-                     │  ├──────────────────────────────────┤  │
-                     │  │  TopBar    — live counters       │  │
-                     │  │  Sidebar   — attack feed + flags │  │
-                     │  │  BottomBar — charts (Recharts)   │  │
-                     │  │  Detail    — click-to-inspect    │  │
-                     │  └──────────────────────────────────┘  │
-                     └─────────────────────────────────────────┘
+                     └──────┬──────────────┬──────────────────┘
+                            │              │
+            ┌───────────────▼──┐   ┌───────▼──────────────┐
+            │  PostgreSQL (:5432)│  │  React Frontend (:5173)│
+            │  Attack persistence│  │  ┌─────────────────┐  │
+            │  Network:          │  │  │ 🌍 3D Globe     │  │
+            │  hp-backend-net    │  │  │ (Three.js)      │  │
+            │                    │  │  │ • Bezier arcs   │  │
+            └────────────────────┘  │  │ • Particles     │  │
+                                    │  │ • Pulses        │  │
+                                    │  ├─────────────────┤  │
+                                    │  │ TopBar | Sidebar│  │
+                                    │  │ BottomBar       │  │
+                                    │  └─────────────────┘  │
+                                    │  Network: hp-backend-net│
+                                    └────────────────────────┘
 ```
 
 ## Quick Start
@@ -63,7 +65,7 @@ docker compose up
 # Open http://localhost:5173
 ```
 
-The mock generator produces 30–60 fake attacks/minute. The globe animates immediately.
+The mock generator produces 30–60 fake attacks/minute. The globe animates immediately. Attacks are persisted to PostgreSQL and survive restarts.
 
 ### Dashboard + Honeypots (Safe, High Ports)
 
@@ -108,6 +110,107 @@ curl http://localhost/phpmyadmin/
 
 # 6. Watch live
 # Open http://localhost:5173 — your attacks appear as arcs
+```
+
+### Manual Attack Testing
+
+Once honeypots are running, you can generate attacks to verify the dashboard captures them. The mock generator is automatically disabled (`MOCK_ENABLED=false`) when using the exposed override, so only real events appear.
+
+#### SSH Brute-Force (Cowrie)
+
+Install `sshpass` first: `sudo apt install sshpass`
+
+**Standard ports** (with `docker-compose.exposed.yml`):
+```bash
+# Common usernames with weak passwords
+sshpass -p 'password123' ssh -o StrictHostKeyChecking=no -p 22 root@localhost
+sshpass -p 'admin123'   ssh -o StrictHostKeyChecking=no -p 22 admin@localhost
+sshpass -p 'toor'       ssh -o StrictHostKeyChecking=no -p 22 root@localhost
+sshpass -p 'ubuntu'     ssh -o StrictHostKeyChecking=no -p 22 ubuntu@localhost
+sshpass -p 'test'       ssh -o StrictHostKeyChecking=no -p 22 test@localhost
+sshpass -p 'oracle'     ssh -o StrictHostKeyChecking=no -p 22 oracle@localhost
+sshpass -p 'postgres'   ssh -o StrictHostKeyChecking=no -p 22 postgres@localhost
+```
+
+**High ports** (dashboard-only `docker compose --profile honeypot up`):
+```bash
+sshpass -p 'password123' ssh -o StrictHostKeyChecking=no -p 2222 root@localhost
+sshpass -p 'admin123'   ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost
+sshpass -p 'toor'       ssh -o StrictHostKeyChecking=no -p 2222 root@localhost
+```
+
+**Batch script** — fires 10 rapid attempts:
+```bash
+for user in root admin ubuntu test oracle postgres nginx git mysql; do
+  sshpass -p 'password123' ssh -o StrictHostKeyChecking=no \
+    -o ConnectTimeout=3 -p 2222 $user@localhost 2>&1
+  sleep 0.2
+done
+```
+
+#### Telnet (Cowrie)
+
+```bash
+# Interactive session
+telnet localhost 2223
+# Type: root / admin / ls / whoami / cat /etc/passwd
+
+# Scripted
+{ echo "root"; echo "password123"; echo "ls -la"; echo "cat /etc/shadow"; sleep 1; } | nc localhost 2223
+```
+
+#### HTTP Attacks (Web Honeypot)
+
+**Standard ports** (port 80):
+```bash
+# Credential stuffing
+curl -X POST http://localhost/login -d 'username=admin&password=hunter2'
+
+# WordPress brute-force
+curl -X POST http://localhost/wp-login.php -d 'log=admin&pwd=password123'
+curl -X POST http://localhost/wp-admin/admin-post.php -d 'action=exploit'
+
+# Config file scraping
+curl http://localhost/.env
+curl http://localhost/.git/config
+curl http://localhost/backup.zip
+
+# Admin panel probes
+curl http://localhost/admin
+curl http://localhost/phpmyadmin/
+curl http://localhost/phpMyAdmin/index.php
+curl http://localhost/wp-admin/
+
+# API enumeration
+curl http://localhost/api/v1/users
+curl http://localhost/graphql
+curl http://localhost/.aws/credentials
+
+# SQL injection attempts
+curl "http://localhost/login?user=admin'%20OR%201=1--"
+curl -X POST http://localhost/search -d 'q=1 UNION SELECT password FROM users'
+```
+
+**High ports** (port 8080):
+```bash
+curl -X POST http://localhost:8080/login -d 'username=admin&password=hunter2'
+curl http://localhost:8080/wp-login.php
+curl http://localhost:8080/.env
+curl http://localhost:8080/admin
+```
+
+#### Verify Attacks in Dashboard
+
+```bash
+# Check attacks were ingested
+curl -s http://localhost:3001/api/stats | python3 -m json.tool
+
+# View latest 10 attacks
+curl -s 'http://localhost:3001/api/attacks?limit=10' | python3 -m json.tool
+
+# Check DB persistence
+curl -s http://localhost:3001/api/health
+# → {"status":"ok","uptime":42.1,"db":true}
 ```
 
 ### How the Firewall Works
@@ -170,6 +273,7 @@ The backend uses `geoip-lite` to resolve attack source IPs to geographic coordin
 |---------|-----------|-----------|----------|---------|
 | **Dashboard Frontend** | `hp-frontend` | `5173` | `5173` | *(always on)* |
 | **Dashboard Backend** | `hp-backend` | `3001` | `3001` | *(always on)* |
+| **PostgreSQL** | `hp-postgres` | `5433` | `5432` | *(always on)* |
 | **Cowrie SSH** | `hp-cowrie` | `2222` | `2222` | `honeypot` |
 | **Web Honeypot** | `hp-web-honeypot` | `8080` | `80` | `honeypot` |
 
@@ -185,7 +289,7 @@ With `docker-compose.exposed.yml` override:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/health` | Health check + uptime |
+| `GET` | `/api/health` | Health check + uptime + DB status (`{status, uptime, db}`) |
 | `GET` | `/api/attacks?limit=50` | Paginated attack list |
 | `GET` | `/api/stats` | Aggregate stats (total, /min, top countries) |
 | `POST` | `/api/honeypot/event` | Honeypot ingestion — resolves IP via GeoIP, broadcasts via WS |
@@ -215,6 +319,11 @@ The web honeypot exposes fake vulnerable pages. Every hit is logged and sent to 
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
 | `MOCK_ENABLED` | `"true"` | Generate fake attacks (`"false"` when honeypots are running) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `DB_HOST` | `postgres` | PostgreSQL hostname |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_NAME` | `honeypot` | PostgreSQL database name |
+| `DB_USER` | `honeypot` | PostgreSQL user |
+| `DB_PASSWORD` | `honeypot123` | PostgreSQL password |
 
 #### Frontend
 
@@ -235,7 +344,7 @@ The web honeypot exposes fake vulnerable pages. Every hit is logged and sent to 
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Base: dashboard + backend. `MOCK_ENABLED=true`. Honeypots on high ports. |
+| `docker-compose.yml` | Base: dashboard + backend + PostgreSQL. `MOCK_ENABLED=true`. Honeypots on high ports. Two Docker networks isolate honeypots from management services. |
 | `docker-compose.exposed.yml` | Override: honeypots on ports 22/80. `MOCK_ENABLED=false`. Requires firewall. |
 
 **Dashboard only:**
@@ -324,18 +433,19 @@ honey-pot/
 │   ├── firewall-up.sh              # iptables DOCKER-USER whitelist
 │   └── firewall-down.sh            # Remove iptables rules
 │
-├── backend/                        # Express + Socket.io + GeoIP
+├── backend/                        # Express + Socket.io + GeoIP + PostgreSQL
 │   ├── Dockerfile
 │   ├── package.json
 │   └── src/
-│       ├── index.js                # Entry: HTTP + WS server
+│       ├── index.js                # Entry: HTTP + WS server, DB init on startup
 │       ├── routes/
-│       │   ├── attacks.js          # GET /api/attacks
-│       │   ├── stats.js            # GET /api/stats
-│       │   └── honeypot.js         # POST /api/honeypot/event (GeoIP)
+│       │   ├── attacks.js          # GET /api/attacks?limit=N (from DB)
+│       │   ├── stats.js            # GET /api/stats (aggregated from DB)
+│       │   └── honeypot.js         # POST /api/honeypot/event (GeoIP → DB)
 │       ├── services/
 │       │   ├── attackGenerator.js  # Mock data (MOCK_ENABLED=true)
-│       │   └── store.js            # In-memory attack store
+│       │   ├── db.js               # PostgreSQL pool + migration + health check
+│       │   └── store.js            # Attack CRUD against PostgreSQL
 │       ├── data/
 │       │   ├── fakeIPs.js          # 40 attacker profiles (mock)
 │       │   └── countries.js        # Country metadata
@@ -433,6 +543,18 @@ curl --connect-timeout 3 http://<vps>:80
 
 This means `sourceLat: 0, sourceLon: 0` — the IP wasn't resolved. The backend uses `geoip-lite` for GeoIP. For localhost/Docker IPs, it cycles through fallback countries. If a real public IP isn't resolving, the `geoip-lite` database may need updating: `npm update geoip-lite` in the backend.
 
+### NaN / computeBoundingSphere errors in browser console
+
+This happens when attack coordinate fields are missing or `undefined` (e.g., `sourceLat` is `undefined`). The backend maps PostgreSQL `snake_case` columns to `camelCase` for the frontend. If you see this after schema changes, make sure `store.js`'s `rowToAttack()` mapper covers all fields the frontend expects.
+
+### PostgreSQL connection refused
+
+The backend retries up to 10 times with a 1-second delay. If it still fails:
+```bash
+docker compose logs postgres   # check PG is healthy
+docker compose logs backend    # check for connection errors
+```
+
 ---
 
 ## Logging
@@ -457,7 +579,8 @@ All services use structured logging with timestamps and tags:
 |-------|-----------|
 | 3D Rendering | Three.js via `@react-three/fiber` + `@react-three/drei` |
 | Frontend | React 18, Vite 6, Tailwind CSS 3, Zustand 5 |
-| Backend | Express 4, Socket.io 4, geoip-lite |
+| Backend | Express 4, Socket.io 4, pg (node-postgres), geoip-lite |
+| Database | PostgreSQL 17 (Alpine) |
 | Charts | Recharts 2 |
 | Honeypots | Cowrie (SSH/Telnet), Custom Node.js (HTTP) |
 | Container | Docker Compose, Alpine Linux images |
